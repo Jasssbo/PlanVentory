@@ -44,7 +44,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 5,  // Added rental-only items support
+      version: 6,  // Added unit cost per item
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -62,6 +62,7 @@ class DatabaseService {
         category TEXT,
         image_url TEXT,
         is_rental_only INTEGER NOT NULL DEFAULT 0,
+        unit_cost REAL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
@@ -340,6 +341,11 @@ class DatabaseService {
     if (oldVersion < 5) {
       // Add is_rental_only column to items table
       await db.execute('ALTER TABLE items ADD COLUMN is_rental_only INTEGER NOT NULL DEFAULT 0');
+    }
+
+    // Migration from version 5 to 6: Add unit cost per inventory item
+    if (oldVersion < 6) {
+      await db.execute('ALTER TABLE items ADD COLUMN unit_cost REAL');
     }
   }
 

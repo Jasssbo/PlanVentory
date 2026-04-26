@@ -111,6 +111,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                       _buildRentalsSection(context),
                       const SizedBox(height: 24),
                     ],
+                    if (_allocations.isNotEmpty) ...[
+                      _buildGearValueSection(context),
+                      const SizedBox(height: 24),
+                    ],
                     const SizedBox(height: 80),
                   ],
                 ),
@@ -426,6 +430,112 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildGearValueSection(BuildContext context) {
+    final colorScheme = context.colorScheme;
+
+    // Only include items that have a unit cost defined
+    final valuedAllocations = _allocations
+        .where((a) => a.item.unitCost != null && a.item.unitCost! > 0)
+        .toList();
+
+    if (valuedAllocations.isEmpty) return const SizedBox.shrink();
+
+    final total = valuedAllocations.fold<double>(
+      0,
+      (sum, a) => sum + a.item.unitCost! * a.allocation.quantityNeeded,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.euro, color: colorScheme.secondary),
+            const SizedBox(width: 8),
+            Text(
+              'Gear Value',
+              style: context.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: Spacing.paddingMd,
+            child: Column(
+              children: [
+                ...valuedAllocations.map((a) {
+                  final lineValue = a.item.unitCost! * a.allocation.quantityNeeded;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            a.item.name,
+                            style: context.textTheme.bodyMedium,
+                          ),
+                        ),
+                        Text(
+                          '${a.allocation.quantityNeeded} × €${a.item.unitCost!.toStringAsFixed(2)}',
+                          style: context.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.outline,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        SizedBox(
+                          width: 80,
+                          child: Text(
+                            '€${lineValue.toStringAsFixed(2)}',
+                            textAlign: TextAlign.end,
+                            style: context.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+                const Divider(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Total Gear Value',
+                        style: context.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '€${total.toStringAsFixed(2)}',
+                      style: context.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.secondary,
+                      ),
+                    ),
+                  ],
+                ),
+                if (valuedAllocations.length < _allocations.length) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '${_allocations.length - valuedAllocations.length} item(s) have no cost set',
+                    style: context.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.outline,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 

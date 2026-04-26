@@ -7,6 +7,7 @@ class Item {
   final String? category;
   final String? imageUrl;
   final bool isRentalOnly; // Items that are never owned, only rented when needed
+  final double? unitCost; // Optional cost per unit in the default currency
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -18,6 +19,7 @@ class Item {
     this.category,
     this.imageUrl,
     this.isRentalOnly = false,
+    this.unitCost,
     DateTime? createdAt,
     DateTime? updatedAt,
   })  : createdAt = createdAt ?? DateTime.now(),
@@ -33,6 +35,7 @@ class Item {
       'category': category,
       'image_url': imageUrl,
       'is_rental_only': isRentalOnly ? 1 : 0,
+      'unit_cost': unitCost,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
@@ -48,6 +51,7 @@ class Item {
       category: map['category'] as String?,
       imageUrl: map['image_url'] as String?,
       isRentalOnly: (map['is_rental_only'] as int?) == 1,
+      unitCost: map['unit_cost'] as double?,
       createdAt: DateTime.parse(map['created_at'] as String),
       updatedAt: DateTime.parse(map['updated_at'] as String),
     );
@@ -62,6 +66,8 @@ class Item {
     String? category,
     String? imageUrl,
     bool? isRentalOnly,
+    double? unitCost,
+    bool clearUnitCost = false,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -73,6 +79,7 @@ class Item {
       category: category ?? this.category,
       imageUrl: imageUrl ?? this.imageUrl,
       isRentalOnly: isRentalOnly ?? this.isRentalOnly,
+      unitCost: clearUnitCost ? null : (unitCost ?? this.unitCost),
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
     );

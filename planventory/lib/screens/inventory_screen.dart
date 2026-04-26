@@ -244,6 +244,7 @@ class _AddItemDialogState extends State<AddItemDialog> {
   late final TextEditingController _descriptionController;
   late final TextEditingController _quantityController;
   late final TextEditingController _categoryController;
+  late final TextEditingController _unitCostController;
   bool _isSaving = false;
 
   bool get isEditing => widget.item != null;
@@ -256,6 +257,11 @@ class _AddItemDialogState extends State<AddItemDialog> {
     _quantityController =
         TextEditingController(text: '${widget.item?.quantity ?? 1}');
     _categoryController = TextEditingController(text: widget.item?.category);
+    _unitCostController = TextEditingController(
+      text: widget.item?.unitCost != null
+          ? widget.item!.unitCost!.toStringAsFixed(2)
+          : '',
+    );
   }
 
   @override
@@ -264,6 +270,7 @@ class _AddItemDialogState extends State<AddItemDialog> {
     _descriptionController.dispose();
     _quantityController.dispose();
     _categoryController.dispose();
+    _unitCostController.dispose();
     super.dispose();
   }
 
@@ -348,6 +355,25 @@ class _AddItemDialogState extends State<AddItemDialog> {
                     );
                   },
                 ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _unitCostController,
+                  decoration: const InputDecoration(
+                    labelText: 'Unit Cost (€)',
+                    hintText: 'e.g., 5.00',
+                    helperText: 'Optional — used to calculate gear value in events',
+                  ),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  validator: (value) {
+                    if (value != null && value.trim().isNotEmpty) {
+                      final cost = double.tryParse(value.trim().replaceAll(',', '.'));
+                      if (cost == null || cost < 0) {
+                        return 'Enter a valid positive amount';
+                      }
+                    }
+                    return null;
+                  },
+                ),
               ],
             ),
           ),
@@ -377,12 +403,16 @@ class _AddItemDialogState extends State<AddItemDialog> {
 
     setState(() => _isSaving = true);
 
+    final rawCost = _unitCostController.text.trim().replaceAll(',', '.');
+    final unitCost = rawCost.isNotEmpty ? double.tryParse(rawCost) : null;
+
     final item = Item(
       id: widget.item?.id,
       name: _nameController.text.trim(),
       description: _descriptionController.text.trim().nullIfEmpty,
       quantity: int.parse(_quantityController.text),
       category: _categoryController.text.trim().nullIfEmpty,
+      unitCost: unitCost,
       createdAt: widget.item?.createdAt,
     );
 

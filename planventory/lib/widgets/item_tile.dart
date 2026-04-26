@@ -71,12 +71,7 @@ class ItemTile extends StatelessWidget {
             ],
           ],
         ),
-        subtitle: item.category != null 
-            ? Text(
-                item.category!,
-                style: TextStyle(color: colorScheme.outline),
-              ) 
-            : null,
+        subtitle: _buildSubtitle(context),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -92,6 +87,20 @@ class ItemTile extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget? _buildSubtitle(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final parts = <String>[];
+    if (item.category != null) parts.add(item.category!);
+    if (!item.isRentalOnly && item.unitCost != null) {
+      parts.add('€${item.unitCost!.toStringAsFixed(2)}/unit');
+    }
+    if (parts.isEmpty) return null;
+    return Text(
+      parts.join(' · '),
+      style: TextStyle(color: colorScheme.outline),
     );
   }
 
