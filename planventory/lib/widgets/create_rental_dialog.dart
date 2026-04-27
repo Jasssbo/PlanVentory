@@ -1,6 +1,23 @@
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../extensions/extensions.dart';
+import '../services/services.dart';
+
+/// Represents an item in the rental list — itemId is null for brand-new items
+/// that haven't been persisted to the DB yet.
+class _PendingRentalItem {
+  int? itemId;
+  final String itemName;
+  final String? category;
+  int quantity;
+
+  _PendingRentalItem({
+    this.itemId,
+    required this.itemName,
+    this.category,
+    required this.quantity,
+  });
+}
 
 /// Dialog widget for creating a rental with multiple items
 class CreateRentalDialog extends StatefulWidget {
@@ -36,7 +53,9 @@ class _CreateRentalDialogState extends State<CreateRentalDialog> {
   final String _currency = 'EUR';
   
   // Items to rent
-  late List<RentalItemData> _items;
+  late List<_PendingRentalItem> _items;
+
+  final ItemDao _itemDao = ItemDao();
 
   @override
   void initState() {
@@ -53,7 +72,7 @@ class _CreateRentalDialogState extends State<CreateRentalDialog> {
     _returnDate = widget.event.endDate.add(const Duration(days: 1));
     
     // Copy initial items so we can modify them
-    _items = widget.initialItems.map((item) => RentalItemData(
+    _items = widget.initialItems.map((item) => _PendingRentalItem(
       itemId: item.itemId,
       itemName: item.itemName,
       quantity: item.quantity,
@@ -72,7 +91,7 @@ class _CreateRentalDialogState extends State<CreateRentalDialog> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     
     if (_items.isEmpty) {
@@ -81,11 +100,26 @@ class _CreateRentalDialogState extends State<CreateRentalDialog> {
       );
       return;
     }
+
+    // Persist any brand-new items (itemId == null) before building the rental
+    for (final pending in _items) {
+      if (pending.itemId == null) {
+        final newItem = Item(
+          name: pending.itemName,
+          quantity: 0,
+          isRentalOnly: true,
+          category: pending.category?.trim().isNotEmpty == true
+              ? pending.category
+              : 'Rental Only',
+        );
+        pending.itemId = await _itemDao.insert(newItem);
+      }
+    }
     
     // Create RentalItem objects (rentalId will be set when saved)
     final rentalItems = _items.map((item) => RentalItem(
       rentalId: 0, // Will be set by DAO
-      itemId: item.itemId,
+      itemId: item.itemId!,
       quantity: item.quantity,
       itemName: item.itemName,
     )).toList();
@@ -105,7 +139,7 @@ class _CreateRentalDialogState extends State<CreateRentalDialog> {
       returnNotes: _returnNotesController.text.trim().nullIfEmpty,
     );
     
-    Navigator.pop(context, rental);
+    if (mounted) Navigator.pop(context, rental);
   }
 
   void _addItem() async {
@@ -114,14 +148,7 @@ class _CreateRentalDialogState extends State<CreateRentalDialog> {
       !_items.any((ri) => ri.itemId == item.id)
     ).toList();
     
-    if (availableToAdd.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No more items available to add')),
-      );
-      return;
-    }
-    
-    final result = await showDialog<RentalItemData>(
+    final result = await showDialog<_PendingRentalItem>(
       context: context,
       builder: (context) => _AddItemDialog(availableItems: availableToAdd),
     );
@@ -134,7 +161,7 @@ class _CreateRentalDialogState extends State<CreateRentalDialog> {
   void _removeItem(int index) {
     setState(() => _items.removeAt(index));
   }
-  
+
   void _updateQuantity(int index, int newQuantity) {
     if (newQuantity > 0) {
       setState(() => _items[index].quantity = newQuantity);
@@ -297,7 +324,7 @@ class _CreateRentalDialogState extends State<CreateRentalDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: _submit,
+          onPressed: () => _submit(),
           child: const Text('Create Rental'),
         ),
       ],
@@ -369,7 +396,7 @@ class _CreateRentalDialogState extends State<CreateRentalDialog> {
     );
   }
   
-  Widget _buildItemRow(RentalItemData item, int index, ThemeData theme) {
+  Widget _buildItemRow(_PendingRentalItem item, int index, ThemeData theme) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: index > 0 ? BoxDecoration(
@@ -423,56 +450,115 @@ class _CreateRentalDialogState extends State<CreateRentalDialog> {
   }
 }
 
-/// Dialog to add an item to the rental
+/// Dialog to add an item to the rental.
+/// Offers two tabs: pick from inventory or type a brand-new item name.
 class _AddItemDialog extends StatefulWidget {
   final List<Item> availableItems;
-  
+
   const _AddItemDialog({required this.availableItems});
-  
+
   @override
   State<_AddItemDialog> createState() => _AddItemDialogState();
 }
 
 class _AddItemDialogState extends State<_AddItemDialog> {
+  int _tab = 0; // 0 = from inventory, 1 = new item
+
+  // Tab 0
   Item? _selectedItem;
+
+  // Tab 1
+  final TextEditingController _newNameController = TextEditingController();
+  final TextEditingController _newCategoryController = TextEditingController();
+
   int _quantity = 1;
-  
+  final TextEditingController _quantityController =
+      TextEditingController(text: '1');
+
+  @override
+  void dispose() {
+    _newNameController.dispose();
+    _newCategoryController.dispose();
+    _quantityController.dispose();
+    super.dispose();
+  }
+
+  bool get _canConfirm {
+    if (_tab == 0) return _selectedItem != null;
+    return _newNameController.text.trim().isNotEmpty;
+  }
+
+  void _confirm() {
+    final qty = _quantity > 0 ? _quantity : 1;
+    if (_tab == 0 && _selectedItem != null) {
+      Navigator.pop(
+        context,
+        _PendingRentalItem(
+          itemId: _selectedItem!.id!,
+          itemName: _selectedItem!.name,
+          quantity: qty,
+        ),
+      );
+    } else if (_tab == 1) {
+      final name = _newNameController.text.trim();
+      if (name.isEmpty) return;
+      Navigator.pop(
+        context,
+        _PendingRentalItem(
+          itemId: null, // will be created on submit
+          itemName: name,
+          category: _newCategoryController.text.trim().nullIfEmpty,
+          quantity: qty,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return AlertDialog(
-      title: const Text('Add Item'),
+      title: const Text('Add Item to Rental'),
       content: SizedBox(
-        width: 300,
+        width: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Using 'value' for controlled dropdown (initialValue doesn't support dynamic updates)
-            DropdownButtonFormField<Item>(
-              // ignore: deprecated_member_use
-              value: _selectedItem,
-              decoration: const InputDecoration(
-                labelText: 'Select Item',
-                border: OutlineInputBorder(),
-              ),
-              items: widget.availableItems.map((item) => DropdownMenuItem(
-                value: item,
-                child: Text(item.name, overflow: TextOverflow.ellipsis),
-              )).toList(),
-              onChanged: (item) {
-                if (item != _selectedItem) {
-                  setState(() => _selectedItem = item);
-                }
-              },
+            SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(
+                  value: 0,
+                  label: Text('From Inventory'),
+                  icon: Icon(Icons.inventory_2_outlined),
+                ),
+                ButtonSegment(
+                  value: 1,
+                  label: Text('New Item'),
+                  icon: Icon(Icons.add_circle_outline),
+                ),
+              ],
+              selected: {_tab},
+              onSelectionChanged: (s) => setState(() {
+                _tab = s.first;
+                _quantity = 1;
+                _quantityController.text = '1';
+              }),
             ),
             const SizedBox(height: 16),
+            if (_tab == 0) ...
+              _buildFromInventory(theme)
+            else ...
+              _buildNewItem(theme),
+            const SizedBox(height: 16),
             TextFormField(
-              initialValue: '1',
+              controller: _quantityController,
               decoration: const InputDecoration(
                 labelText: 'Quantity',
                 border: OutlineInputBorder(),
               ),
               keyboardType: TextInputType.number,
-              onChanged: (value) => _quantity = int.tryParse(value) ?? 1,
+              onChanged: (v) => setState(() => _quantity = int.tryParse(v) ?? 1),
             ),
           ],
         ),
@@ -483,16 +569,94 @@ class _AddItemDialogState extends State<_AddItemDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: _selectedItem != null ? () {
-            Navigator.pop(context, RentalItemData(
-              itemId: _selectedItem!.id!,
-              itemName: _selectedItem!.name,
-              quantity: _quantity > 0 ? _quantity : 1,
-            ));
-          } : null,
+          onPressed: _canConfirm ? _confirm : null,
           child: const Text('Add'),
         ),
       ],
     );
+  }
+
+  List<Widget> _buildFromInventory(ThemeData theme) {
+    if (widget.availableItems.isEmpty) {
+      return [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            'All inventory items are already in this rental. '  
+            'Switch to "New Item" to add a custom one.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.outline,
+            ),
+          ),
+        ),
+      ];
+    }
+    return [
+      DropdownButtonFormField<Item>(
+        // ignore: deprecated_member_use
+        value: _selectedItem,
+        decoration: const InputDecoration(
+          labelText: 'Select Item',
+          border: OutlineInputBorder(),
+        ),
+        items: widget.availableItems
+            .map((item) => DropdownMenuItem(
+                  value: item,
+                  child: Text(item.name, overflow: TextOverflow.ellipsis),
+                ))
+            .toList(),
+        onChanged: (item) => setState(() => _selectedItem = item),
+      ),
+    ];
+  }
+
+  List<Widget> _buildNewItem(ThemeData theme) {
+    return [
+      Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.tertiaryContainer.withAlpha(100),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline,
+                size: 16, color: theme.colorScheme.onTertiaryContainer),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'A new rental-only item will be created automatically.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onTertiaryContainer,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _newNameController,
+        decoration: const InputDecoration(
+          labelText: 'Item Name',
+          hintText: 'e.g., Yamaha MG16 Mixer',
+          border: OutlineInputBorder(),
+        ),
+        onChanged: (_) => setState(() {}),
+      ),
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _newCategoryController,
+        decoration: const InputDecoration(
+          labelText: 'Category',
+          hintText: 'e.g., Audio, Video, Lighting',
+          border: OutlineInputBorder(),
+        ),
+      ),
+    ];
   }
 }

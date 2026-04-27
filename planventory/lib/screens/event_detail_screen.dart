@@ -6,6 +6,7 @@ import '../services/services.dart';
 import '../extensions/extensions.dart';
 import '../core/core.dart';
 import '../widgets/create_rental_dialog.dart';
+import '../widgets/edit_rental_dialog.dart';
 
 /// Detailed view for an event with material allocation management
 class EventDetailScreen extends StatefulWidget {
@@ -23,6 +24,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   List<Rental> _rentals = [];
   List<ShortageInfo> _shortages = [];
   bool _isLoading = true;
+  bool _categoryView = false;
 
   final AllocationDao _allocationDao = AllocationDao();
   final ItemDao _itemDao = ItemDao();
@@ -111,7 +113,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                       _buildRentalsSection(context),
                       const SizedBox(height: 24),
                     ],
-                    if (_allocations.isNotEmpty) ...[
+                    if (_allocations.isNotEmpty && !_categoryView) ...[
                       _buildGearValueSection(context),
                       const SizedBox(height: 24),
                     ],
@@ -338,6 +340,17 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                 color: context.colorScheme.outline,
               ),
             ),
+            if (_allocations.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              IconButton(
+                icon: Icon(
+                  _categoryView ? Icons.list : Icons.category_outlined,
+                  color: context.colorScheme.primary,
+                ),
+                tooltip: _categoryView ? 'List view' : 'Category view',
+                onPressed: () => setState(() => _categoryView = !_categoryView),
+              ),
+            ],
           ],
         ),
         const SizedBox(height: 12),
@@ -371,28 +384,293 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
               ),
             ),
           )
+        else if (_categoryView)
+          _buildCategoryGroupedView(context)
         else
           ...(_allocations.map((a) => _buildAllocationTile(context, a))),
       ],
     );
   }
 
+  /// Returns the card background colour for an item in category view based on rental status.
+  /// null = neutral (no override).
+  Color? _categoryTileColor(AllocationWithItem a, ColorScheme cs) {
+    final needsRental = a.item.isRentalOnly ||
+        a.allocation.quantityNeeded > a.item.quantity;
+    if (!needsRental) return null;
+
+    final itemRentals = _rentals
+        .where((r) =>
+            r.status != RentalStatus.cancelled &&
+            r.items.any((ri) => ri.itemId == a.item.id))
+        .toList();
+
+    if (itemRentals.isEmpty) return cs.errorContainer;
+    if (itemRentals.any((r) => r.status == RentalStatus.returned)) return null;
+    if (itemRentals.any((r) => r.status == RentalStatus.pickedUp)) {
+      return Colors.green.withValues(alpha: 0.18);
+    }
+    // pending
+    return Colors.amber.withValues(alpha: 0.25);
+  }
+
+  Widget _buildCategoryViewTile(
+      BuildContext context, AllocationWithItem allocation) {
+    final colorScheme = context.colorScheme;
+    final isRentalOnly = allocation.item.isRentalOnly;
+    final tileColor = _categoryTileColor(allocation, colorScheme);
+
+    return Card(
+      color: tileColor,
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: isRentalOnly
+              ? colorScheme.tertiaryContainer
+              : colorScheme.primaryContainer,
+          child: Icon(
+            isRentalOnly ? Icons.shopping_cart : Icons.category,
+            color: isRentalOnly
+                ? colorScheme.onTertiaryContainer
+                : colorScheme.primary,
+            size: 20,
+          ),
+        ),
+        title: Text(allocation.item.name),
+        subtitle: _buildCategoryTileSubtitle(context, allocation),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                '${allocation.allocation.quantityNeeded}',
+                style: context.textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              icon: Icon(Icons.edit, color: colorScheme.primary, size: 20),
+              onPressed: () =>
+                  _showEditAllocationDialog(context, allocation),
+              tooltip: 'Edit quantity',
+            ),
+            IconButton(
+              icon:
+                  Icon(Icons.delete_outline, color: colorScheme.error, size: 20),
+              onPressed: () => _confirmRemoveAllocation(context, allocation),
+              tooltip: 'Remove',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget? _buildCategoryTileSubtitle(
+      BuildContext context, AllocationWithItem a) {
+    if (!a.item.isRentalOnly &&
+        a.allocation.quantityNeeded <= a.item.quantity) {
+      return null; // owned item with enough stock — no status needed
+    }
+    final itemRentals = _rentals
+        .where((r) =>
+            r.status != RentalStatus.cancelled &&
+            r.items.any((ri) => ri.itemId == a.item.id))
+        .toList();
+
+    String statusLabel;
+    if (itemRentals.isEmpty) {
+      statusLabel = 'No rental arranged';
+    } else if (itemRentals.any((r) => r.status == RentalStatus.returned)) {
+      statusLabel = 'Returned';
+    } else if (itemRentals.any((r) => r.status == RentalStatus.pickedUp)) {
+      statusLabel = 'Picked up — in use';
+    } else {
+      statusLabel = 'Rental pending';
+    }
+
+    return Text(
+      statusLabel,
+      style: TextStyle(color: context.colorScheme.outline),
+    );
+  }
+
+  Widget _buildCategoryGroupedView(BuildContext context) {
+    final colorScheme = context.colorScheme;
+
+    // Group ALL allocations by category (null → 'Uncategorized')
+    final Map<String, List<AllocationWithItem>> grouped = {};
+    for (final a in _allocations) {
+      final key = (a.item.category?.isNotEmpty == true)
+          ? a.item.category!
+          : 'Uncategorized';
+      grouped.putIfAbsent(key, () => []).add(a);
+    }
+
+    // Sort categories alphabetically, 'Uncategorized' last
+    final sortedKeys = grouped.keys.toList()
+      ..sort((a, b) {
+        if (a == 'Uncategorized') return 1;
+        if (b == 'Uncategorized') return -1;
+        return a.compareTo(b);
+      });
+
+    // Value summary
+    final inventoryValue = _allocations
+        .where((a) =>
+            !a.item.isRentalOnly &&
+            a.item.unitCost != null &&
+            a.item.unitCost! > 0)
+        .fold<double>(
+            0, (s, a) => s + a.item.unitCost! * a.allocation.quantityNeeded);
+
+    final rentalValue = _rentals
+        .where((r) =>
+            r.status != RentalStatus.cancelled && r.rentalCost != null)
+        .fold<double>(0, (s, r) => s + r.rentalCost!);
+
+    final showSummary = inventoryValue > 0 || rentalValue > 0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final category in sortedKeys) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 4, left: 4),
+            child: Row(
+              children: [
+                Icon(Icons.folder_outlined,
+                    size: 16, color: colorScheme.secondary),
+                const SizedBox(width: 6),
+                Text(
+                  category,
+                  style: context.textTheme.labelLarge?.copyWith(
+                    color: colorScheme.secondary,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '(${grouped[category]!.length})',
+                  style: context.textTheme.labelSmall
+                      ?.copyWith(color: colorScheme.outline),
+                ),
+              ],
+            ),
+          ),
+          ...grouped[category]!
+              .map((a) => _buildCategoryViewTile(context, a)),
+        ],
+        if (showSummary) ...[
+          const SizedBox(height: 16),
+          _buildCategoryValueSummary(context, inventoryValue, rentalValue),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildCategoryValueSummary(
+      BuildContext context, double inventoryValue, double rentalValue) {
+    final colorScheme = context.colorScheme;
+    final total = inventoryValue + rentalValue;
+
+    return Card(
+      child: Padding(
+        padding: Spacing.paddingMd,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.euro, size: 18, color: colorScheme.secondary),
+                const SizedBox(width: 6),
+                Text(
+                  'Total Gear Value',
+                  style: context.textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (inventoryValue > 0)
+              _summaryRow(context, 'Owned inventory',
+                  '€${inventoryValue.toStringAsFixed(2)}'),
+            if (rentalValue > 0)
+              _summaryRow(
+                  context, 'Rental costs', '€${rentalValue.toStringAsFixed(2)}'),
+            const Divider(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Grand Total',
+                    style: context.textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                Text(
+                  '€${total.toStringAsFixed(2)}',
+                  style: context.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.secondary,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _summaryRow(BuildContext context, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: context.textTheme.bodySmall
+                  ?.copyWith(color: context.colorScheme.outline),
+            ),
+          ),
+          Text(value, style: context.textTheme.bodyMedium),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAllocationTile(BuildContext context, AllocationWithItem allocation) {
     final colorScheme = context.colorScheme;
     final isShortage = _shortages.any((s) => s.itemId == allocation.item.id);
-    
+    final isRentalOnly = allocation.item.isRentalOnly;
+
     return Card(
-      color: isShortage 
+      color: isShortage
           ? colorScheme.errorContainer.withValues(alpha: 0.2)
           : null,
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: isShortage 
+          backgroundColor: isShortage
               ? colorScheme.error.withValues(alpha: 0.2)
-              : colorScheme.primaryContainer,
+              : isRentalOnly
+                  ? colorScheme.tertiaryContainer
+                  : colorScheme.primaryContainer,
           child: Icon(
-            Icons.category,
-            color: isShortage ? colorScheme.error : colorScheme.primary,
+            isRentalOnly ? Icons.shopping_cart : Icons.category,
+            color: isShortage
+                ? colorScheme.error
+                : isRentalOnly
+                    ? colorScheme.onTertiaryContainer
+                    : colorScheme.primary,
           ),
         ),
         title: Text(allocation.item.name),
@@ -605,6 +883,31 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (value) {
+                    if (value == 'edit') _editRental(rental);
+                    if (value == 'delete') _deleteRental(rental);
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
+                      value: 'edit',
+                      child: ListTile(
+                        leading: Icon(Icons.edit_outlined),
+                        title: Text('Edit'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: ListTile(
+                        leading: Icon(Icons.delete_outline),
+                        title: Text('Delete'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -719,6 +1022,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     Item? selectedItem;
     int quantity = 1;
     final newItemNameController = TextEditingController();
+    final newItemCategoryController = TextEditingController();
 
     await showDialog(
       context: context,
@@ -927,6 +1231,15 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
+                      controller: newItemCategoryController,
+                      decoration: const InputDecoration(
+                        labelText: 'Category',
+                        hintText: 'e.g., Audio, Video, Lighting',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
                       decoration: const InputDecoration(
                         labelText: 'Quantity Needed',
                         border: OutlineInputBorder(),
@@ -956,8 +1269,9 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                           await _addMaterial(selectedItem!, quantity);
                         } else if (selectedTab == 1) {
                           await _addRentalOnlyMaterial(
-                            newItemNameController.text.trim(), 
+                            newItemNameController.text.trim(),
                             quantity,
+                            category: newItemCategoryController.text.trim().nullIfEmpty,
                           );
                         }
                       },
@@ -970,15 +1284,16 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     );
     
     newItemNameController.dispose();
+    newItemCategoryController.dispose();
   }
 
-  Future<void> _addRentalOnlyMaterial(String itemName, int quantity) async {
+  Future<void> _addRentalOnlyMaterial(String itemName, int quantity, {String? category}) async {
     // Create a new rental-only item in inventory
     final newItem = Item(
       name: itemName,
       quantity: 0, // We don't own any
       isRentalOnly: true,
-      category: 'Rental Only',
+      category: category ?? 'Rental Only',
     );
     
     final itemDao = ItemDao();
@@ -1199,11 +1514,80 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
   Future<void> _createRental(Rental rental) async {
     await _rentalDao.insert(rental);
+
+    // Ensure every item in the rental has an allocation for this event.
+    // The item that triggered the dialog already has one; items added *inside*
+    // the rental dialog do not, so we create them here.
+    for (final ri in rental.items) {
+      final existing =
+          await _allocationDao.getByEventAndItem(_event.id!, ri.itemId);
+      if (existing == null) {
+        await _allocationDao.insert(Allocation(
+          eventId: _event.id!,
+          itemId: ri.itemId,
+          quantityNeeded: ri.quantity,
+        ));
+      }
+    }
+
     await _loadData();
     
     if (mounted) {
       context.read<AppStateProvider>().notifyRefreshNeeded();
       context.showSuccess('Rental ticket created');
+    }
+  }
+
+  Future<void> _editRental(Rental rental) async {
+    final availableItems = await _itemDao.getAll();
+    if (!mounted) return;
+
+    final updatedRental = await showDialog<Rental>(
+      context: context,
+      builder: (dialogContext) => EditRentalDialog(
+        rental: rental,
+        availableItems: availableItems,
+      ),
+    );
+
+    if (updatedRental != null && mounted) {
+      await _rentalDao.update(updatedRental);
+      await _loadData();
+      if (!mounted) return;
+      context.read<AppStateProvider>().notifyRefreshNeeded();
+      context.showSuccess('Rental updated');
+    }
+  }
+
+  Future<void> _deleteRental(Rental rental) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Rental?'),
+        content: Text(
+            'Delete rental from "${rental.companyName}"?\n\nThis action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: context.colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await _rentalDao.delete(rental.id!);
+      await _loadData();
+      if (!mounted) return;
+      context.read<AppStateProvider>().notifyRefreshNeeded();
+      context.showSuccess('Rental deleted');
     }
   }
 

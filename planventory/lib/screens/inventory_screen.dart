@@ -248,6 +248,7 @@ class _AddItemDialogState extends State<AddItemDialog> {
   bool _isSaving = false;
 
   bool get isEditing => widget.item != null;
+  bool get isRentalOnly => widget.item?.isRentalOnly ?? false;
 
   @override
   void initState() {
@@ -313,9 +314,10 @@ class _AddItemDialogState extends State<AddItemDialog> {
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _quantityController,
-                  decoration: const InputDecoration(
-                    labelText: 'Quantity *',
+                  decoration: InputDecoration(
+                    labelText: isRentalOnly ? 'Quantity Needed *' : 'Quantity *',
                     hintText: '1',
+                    helperText: isRentalOnly ? 'How many units you are renting' : null,
                   ),
                   keyboardType: TextInputType.number,
                   validator: (value) {
@@ -355,25 +357,27 @@ class _AddItemDialogState extends State<AddItemDialog> {
                     );
                   },
                 ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _unitCostController,
-                  decoration: const InputDecoration(
-                    labelText: 'Unit Cost (€)',
-                    hintText: 'e.g., 5.00',
-                    helperText: 'Optional — used to calculate gear value in events',
-                  ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  validator: (value) {
-                    if (value != null && value.trim().isNotEmpty) {
-                      final cost = double.tryParse(value.trim().replaceAll(',', '.'));
-                      if (cost == null || cost < 0) {
-                        return 'Enter a valid positive amount';
+                if (!isRentalOnly) ...[                
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _unitCostController,
+                    decoration: const InputDecoration(
+                      labelText: 'Unit Cost (€)',
+                      hintText: 'e.g., 5.00',
+                      helperText: 'Optional — used to calculate gear value in events',
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    validator: (value) {
+                      if (value != null && value.trim().isNotEmpty) {
+                        final cost = double.tryParse(value.trim().replaceAll(',', '.'));
+                        if (cost == null || cost < 0) {
+                          return 'Enter a valid positive amount';
+                        }
                       }
-                    }
-                    return null;
-                  },
-                ),
+                      return null;
+                    },
+                  ),
+                ],
               ],
             ),
           ),
@@ -412,7 +416,8 @@ class _AddItemDialogState extends State<AddItemDialog> {
       description: _descriptionController.text.trim().nullIfEmpty,
       quantity: int.parse(_quantityController.text),
       category: _categoryController.text.trim().nullIfEmpty,
-      unitCost: unitCost,
+      isRentalOnly: isRentalOnly,
+      unitCost: isRentalOnly ? null : unitCost,
       createdAt: widget.item?.createdAt,
     );
 
