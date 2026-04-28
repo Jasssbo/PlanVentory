@@ -30,7 +30,9 @@ class Rental {
   final DateTime? actualPickupDate;  // When actually picked up
   final DateTime? actualReturnDate;  // When actually returned
   final String? returnConfirmation;  // Notes when marking returned
-  
+
+  final int? venueId;  // Optional — which venue/stage this rental is for
+
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -52,6 +54,7 @@ class Rental {
     this.actualPickupDate,
     this.actualReturnDate,
     this.returnConfirmation,
+    this.venueId,
     DateTime? createdAt,
     DateTime? updatedAt,
   })  : createdAt = createdAt ?? DateTime.now(),
@@ -100,6 +103,7 @@ class Rental {
       'actual_pickup_date': actualPickupDate?.toIso8601String(),
       'actual_return_date': actualReturnDate?.toIso8601String(),
       'return_confirmation': returnConfirmation,
+      'venue_id': venueId,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
@@ -132,6 +136,7 @@ class Rental {
           ? DateTime.parse(map['actual_return_date'] as String)
           : null,
       returnConfirmation: map['return_confirmation'] as String?,
+      venueId: map['venue_id'] as int?,
       createdAt: DateTime.parse(map['created_at'] as String),
       updatedAt: DateTime.parse(map['updated_at'] as String),
     );
@@ -156,6 +161,8 @@ class Rental {
     DateTime? actualPickupDate,
     DateTime? actualReturnDate,
     String? returnConfirmation,
+    int? venueId,
+    bool clearVenueId = false,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -177,6 +184,7 @@ class Rental {
       actualPickupDate: actualPickupDate ?? this.actualPickupDate,
       actualReturnDate: actualReturnDate ?? this.actualReturnDate,
       returnConfirmation: returnConfirmation ?? this.returnConfirmation,
+      venueId: clearVenueId ? null : (venueId ?? this.venueId),
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
     );

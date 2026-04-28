@@ -19,19 +19,26 @@ migrate_working_dir/
 .idea/
 
 # The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
+# VS Code which you may wish to include in version control. Uncomment to exclude:
 #.vscode/
 
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
 /build/
 /coverage/
+
+# VS Code settings (optional — uncomment to exclude editor config)
+#.vscode/
+
+# Generated files
+*.g.dart
+*.freezed.dart
 
 # Symbolication related
 app.*.symbols

@@ -44,7 +44,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 6,  // Added unit cost per item
+      version: 8,  // Added per-item rental cost
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -92,9 +92,11 @@ class DatabaseService {
         item_id INTEGER NOT NULL,
         quantity_needed INTEGER NOT NULL DEFAULT 1,
         notes TEXT,
+        venue_id INTEGER,
         created_at TEXT NOT NULL,
         FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE,
-        FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
+        FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE,
+        FOREIGN KEY (venue_id) REFERENCES venues (id) ON DELETE SET NULL
       )
     ''');
 
@@ -125,6 +127,7 @@ class DatabaseService {
         actual_pickup_date TEXT,
         actual_return_date TEXT,
         return_confirmation TEXT,
+        venue_id INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE
@@ -138,11 +141,25 @@ class DatabaseService {
         rental_id INTEGER NOT NULL,
         item_id INTEGER NOT NULL,
         quantity INTEGER NOT NULL DEFAULT 1,
+        item_cost REAL,
         FOREIGN KEY (rental_id) REFERENCES rentals (id) ON DELETE CASCADE,
         FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
       )
     ''');
 
+    // Venues table
+    await db.execute('''
+      CREATE TABLE venues (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX idx_venues_event ON venues(event_id)');
     await db.execute(
         'CREATE INDEX idx_rentals_event ON rentals(event_id)');
     await db.execute(
@@ -346,6 +363,29 @@ class DatabaseService {
     // Migration from version 5 to 6: Add unit cost per inventory item
     if (oldVersion < 6) {
       await db.execute('ALTER TABLE items ADD COLUMN unit_cost REAL');
+    }
+
+    // Migration from version 6 to 7: Add venues/stages
+    if (oldVersion < 7) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS venues (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          event_id INTEGER NOT NULL,
+          name TEXT NOT NULL,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE
+        )
+      ''');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_venues_event ON venues(event_id)');
+      await db.execute('ALTER TABLE allocations ADD COLUMN venue_id INTEGER');
+      await db.execute('ALTER TABLE rentals ADD COLUMN venue_id INTEGER');
+    }
+
+    // Migration from version 7 to 8: Per-item rental cost
+    if (oldVersion < 8) {
+      await db.execute('ALTER TABLE rental_items ADD COLUMN item_cost REAL');
     }
   }
 

@@ -5,7 +5,9 @@ class RentalItem {
   final int rentalId;
   final int itemId;
   final int quantity;
-  
+  /// Optional per-item rental cost (e.g. what this specific item costs to rent)
+  final double? itemCost;
+
   // Cached item details (for display purposes, not stored in DB)
   final String? itemName;
 
@@ -14,6 +16,7 @@ class RentalItem {
     required this.rentalId,
     required this.itemId,
     required this.quantity,
+    this.itemCost,
     this.itemName,
   });
 
@@ -24,6 +27,7 @@ class RentalItem {
       'rental_id': rentalId,
       'item_id': itemId,
       'quantity': quantity,
+      'item_cost': itemCost,
     };
   }
 
@@ -34,6 +38,7 @@ class RentalItem {
       rentalId: map['rental_id'] as int,
       itemId: map['item_id'] as int,
       quantity: map['quantity'] as int,
+      itemCost: map['item_cost'] as double?,
       itemName: itemName ?? map['item_name'] as String?,
     );
   }
@@ -44,6 +49,8 @@ class RentalItem {
     int? rentalId,
     int? itemId,
     int? quantity,
+    double? itemCost,
+    bool clearItemCost = false,
     String? itemName,
   }) {
     return RentalItem(
@@ -51,6 +58,7 @@ class RentalItem {
       rentalId: rentalId ?? this.rentalId,
       itemId: itemId ?? this.itemId,
       quantity: quantity ?? this.quantity,
+      itemCost: clearItemCost ? null : (itemCost ?? this.itemCost),
       itemName: itemName ?? this.itemName,
     );
   }

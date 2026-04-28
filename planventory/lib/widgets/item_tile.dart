@@ -42,34 +42,10 @@ class ItemTile extends StatelessWidget {
                   ),
                 ),
         ),
-        title: Row(
-          children: [
-            Flexible(
-              child: Text(
-                item.name,
-                style: const TextStyle(fontWeight: FontWeight.w500),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (item.isRentalOnly) ...[
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: colorScheme.tertiaryContainer,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  'RENTAL',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: colorScheme.onTertiaryContainer,
-                  ),
-                ),
-              ),
-            ],
-          ],
+        title: Text(
+          item.name,
+          style: const TextStyle(fontWeight: FontWeight.w500),
+          overflow: TextOverflow.ellipsis,
         ),
         subtitle: _buildSubtitle(context),
         trailing: Row(
@@ -107,59 +83,18 @@ class ItemTile extends StatelessWidget {
   Widget _buildQuantityBadge(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     
-    // Rental-only items show a special badge
+    // Rental-only items: show cart icon badge only (no text)
     if (item.isRentalOnly) {
-      if (allocatedQuantity != null) {
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: colorScheme.tertiaryContainer,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.shopping_cart,
-                size: 16,
-                color: colorScheme.onTertiaryContainer,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                'Need $allocatedQuantity',
-                style: TextStyle(
-                  color: colorScheme.onTertiaryContainer,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        );
-      }
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
           color: colorScheme.tertiaryContainer,
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.shopping_cart,
-              size: 16,
-              color: colorScheme.onTertiaryContainer,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              'Rent only',
-              style: TextStyle(
-                color: colorScheme.onTertiaryContainer,
-                fontWeight: FontWeight.bold,
-                fontSize: 12,
-              ),
-            ),
-          ],
+        child: Icon(
+          Icons.shopping_cart,
+          size: 16,
+          color: colorScheme.onTertiaryContainer,
         ),
       );
     }

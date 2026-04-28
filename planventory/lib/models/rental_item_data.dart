@@ -4,10 +4,12 @@ class RentalItemData {
   final int itemId;
   final String itemName;
   int quantity;
-  
+  double? itemCost;
+
   RentalItemData({
     required this.itemId,
     required this.itemName,
     required this.quantity,
+    this.itemCost,
   });
 }

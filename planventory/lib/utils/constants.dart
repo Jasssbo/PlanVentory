@@ -6,9 +6,9 @@ class AppConstants {
   static const String appName = 'PlanVentory';
   static const String appVersion = '1.0.0';
 
-  // Database
+  // Database (keep in sync with DatabaseService.openDatabase version)
   static const String databaseName = 'planventory.db';
-  static const int databaseVersion = 1;
+  static const int databaseVersion = 8;
 
   // Event statuses
   static const String statusUpcoming = 'upcoming';

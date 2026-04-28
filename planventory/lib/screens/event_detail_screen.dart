@@ -7,6 +7,13 @@ import '../extensions/extensions.dart';
 import '../core/core.dart';
 import '../widgets/create_rental_dialog.dart';
 import '../widgets/edit_rental_dialog.dart';
+import 'inventory_screen.dart';
+
+/// Simple result carrier for venue-picker dialogs.
+class _VenuePick {
+  final int? venueId;
+  const _VenuePick({required this.venueId});
+}
 
 /// Detailed view for an event with material allocation management
 class EventDetailScreen extends StatefulWidget {
@@ -23,13 +30,36 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   List<AllocationWithItem> _allocations = [];
   List<Rental> _rentals = [];
   List<ShortageInfo> _shortages = [];
+  List<Venue> _venues = [];
+  int? _selectedVenueId; // null = "All Venues"
   bool _isLoading = true;
   bool _categoryView = false;
 
   final AllocationDao _allocationDao = AllocationDao();
   final ItemDao _itemDao = ItemDao();
   final RentalDao _rentalDao = RentalDao();
+  final VenueDao _venueDao = VenueDao();
   final AvailabilityService _availabilityService = AvailabilityService();
+
+  // Allocations/rentals filtered by the currently selected venue (or all if null).
+  List<AllocationWithItem> get _visibleAllocations => _selectedVenueId == null
+      ? _allocations
+      : _allocations.where((a) => a.allocation.venueId == _selectedVenueId).toList();
+
+  List<Rental> get _visibleRentals {
+    if (_selectedVenueId == null) return _rentals;
+    return _rentals.where((r) {
+      // Rental directly tagged to this venue
+      if (r.venueId == _selectedVenueId) return true;
+      // Rental without a venue tag — include it if any of its items are
+      // allocated to this venue (rental-only items linked by itemId)
+      if (r.venueId != null) return false;
+      return r.items.any((ri) => _allocations.any((a) =>
+          a.item.id != null &&
+          a.item.id == ri.itemId &&
+          a.allocation.venueId == _selectedVenueId));
+    }).toList();
+  }
 
   @override
   void initState() {
@@ -58,6 +88,9 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     // Load rentals
     final rentals = await _rentalDao.getForEvent(_event.id!);
 
+    // Load venues
+    final venues = await _venueDao.getForEvent(_event.id!);
+
     // Check for shortages
     final shortages = await _availabilityService.getShortagesForEvent(
       eventId: _event.id!,
@@ -69,6 +102,12 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       _allocations = allocationsWithItems;
       _rentals = rentals;
       _shortages = shortages;
+      _venues = venues;
+      // Reset venue filter if the selected venue was deleted
+      if (_selectedVenueId != null &&
+          !venues.any((v) => v.id == _selectedVenueId)) {
+        _selectedVenueId = null;
+      }
       _isLoading = false;
     });
   }
@@ -102,19 +141,24 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildEventInfo(context),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
+                    _buildVenueSelector(context),
+                    const SizedBox(height: 16),
                     if (_shortages.isNotEmpty) ...[
                       _buildShortagesSection(context),
                       const SizedBox(height: 24),
                     ],
                     _buildMaterialsSection(context),
                     const SizedBox(height: 24),
-                    if (_rentals.isNotEmpty) ...[
+                    if (_selectedVenueId == null &&
+                        _visibleRentals.isNotEmpty) ...[
                       _buildRentalsSection(context),
                       const SizedBox(height: 24),
                     ],
-                    if (_allocations.isNotEmpty && !_categoryView) ...[
-                      _buildGearValueSection(context),
+                    if (_selectedVenueId == null &&
+                        (_visibleAllocations.isNotEmpty ||
+                            _visibleRentals.isNotEmpty)) ...[
+                      _buildSharedGearValueSection(context),
                       const SizedBox(height: 24),
                     ],
                     const SizedBox(height: 80),
@@ -209,8 +253,269 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     );
   }
 
-  Widget _buildShortagesSection(BuildContext context) {
+  // ─── Venue selector ────────────────────────────────────────────────────────
+
+  Widget _buildVenueSelector(BuildContext context) {
+    final colorScheme = context.colorScheme;
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.place_outlined, size: 18, color: colorScheme.secondary),
+            const SizedBox(width: 6),
+            Text(
+              'Venues / Stages',
+              style: context.textTheme.labelLarge?.copyWith(
+                color: colorScheme.secondary,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const Spacer(),
+            if (_venues.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.settings_outlined, size: 18),
+                tooltip: 'Manage venues',
+                onPressed: () => _showManageVenuesDialog(context),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        if (_venues.isEmpty)
+          // Empty state — prompt user to split the event into stages
+          OutlinedButton.icon(
+            icon: const Icon(Icons.add_location_alt_outlined, size: 18),
+            label: const Text('Split event into stages / venues'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: colorScheme.secondary,
+              side: BorderSide(
+                  color: colorScheme.secondary.withValues(alpha: 0.5),
+                  style: BorderStyle.solid),
+            ),
+            onPressed: () => _showAddVenueDialog(context),
+          )
+        else
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                // "All" chip
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: const Text('All Venues'),
+                    selected: _selectedVenueId == null,
+                    onSelected: (_) => setState(() => _selectedVenueId = null),
+                  ),
+                ),
+                // Per-venue chips
+                ..._venues.map((v) => Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: FilterChip(
+                        label: Text(v.name),
+                        selected: _selectedVenueId == v.id,
+                        onSelected: (_) =>
+                            setState(() => _selectedVenueId = v.id),
+                      ),
+                    )),
+                // Add venue chip
+                ActionChip(
+                  avatar: const Icon(Icons.add, size: 16),
+                  label: const Text('Add Venue'),
+                  onPressed: () => _showAddVenueDialog(context),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _showAddVenueDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Venue'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Venue name',
+            hintText: 'e.g., Main Stage, Stage 2, Backstage',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) {
+            if (v.trim().isNotEmpty) Navigator.pop(ctx, v.trim());
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              if (name.isNotEmpty) Navigator.pop(ctx, name);
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (result != null && mounted) {
+      final id = await _venueDao.insert(Venue(
+        eventId: _event.id!,
+        name: result,
+        sortOrder: _venues.length,
+      ));
+      await _loadData();
+      if (mounted) setState(() => _selectedVenueId = id);
+    }
+  }
+
+  Future<void> _showManageVenuesDialog(BuildContext context) async {
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Manage Venues'),
+            content: SizedBox(
+              width: 380,
+              child: _venues.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Text('No venues yet. Add one below.'),
+                    )
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: _venues
+                          .map((v) => ListTile(
+                                leading: const Icon(Icons.place_outlined),
+                                title: Text(v.name),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.edit_outlined,
+                                          size: 18),
+                                      tooltip: 'Rename',
+                                      onPressed: () async {
+                                        Navigator.pop(ctx);
+                                        await _showRenameVenueDialog(
+                                            context, v);
+                                      },
+                                    ),
+                                    IconButton(
+                                      icon: Icon(Icons.delete_outline,
+                                          size: 18,
+                                          color: context.colorScheme.error),
+                                      tooltip: 'Delete',
+                                      onPressed: () async {
+                                        Navigator.pop(ctx);
+                                        await _confirmDeleteVenue(context, v);
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ))
+                          .toList(),
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Close'),
+              ),
+              FilledButton.icon(
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Add Venue'),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _showAddVenueDialog(context);
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _showRenameVenueDialog(BuildContext context, Venue venue) async {
+    final controller = TextEditingController(text: venue.name);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename Venue'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Venue name',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) {
+            if (v.trim().isNotEmpty) Navigator.pop(ctx, v.trim());
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              if (name.isNotEmpty) Navigator.pop(ctx, name);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (result != null && mounted) {
+      await _venueDao.update(venue.copyWith(name: result));
+      await _loadData();
+    }
+  }
+
+  Future<void> _confirmDeleteVenue(BuildContext context, Venue venue) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete "${venue.name}"?'),
+        content: const Text(
+            'Materials and rentals assigned to this venue will become unassigned '
+            'but will NOT be deleted.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+                backgroundColor: context.colorScheme.error),
+            child: const Text('Delete Venue'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await _venueDao.unassignItemsForVenue(venue.id!);
+      await _venueDao.delete(venue.id!);
+      await _loadData();
+    }
+  }
+
+  // ─── Shortages ─────────────────────────────────────────────────────────────
+
+  Widget _buildShortagesSection(BuildContext context) {    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
@@ -320,6 +625,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   }
 
   Widget _buildMaterialsSection(BuildContext context) {
+    final visible = _visibleAllocations;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -335,12 +641,12 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
             ),
             const Spacer(),
             Text(
-              '${_allocations.length} items',
+              '${visible.length} items',
               style: context.textTheme.bodySmall?.copyWith(
                 color: context.colorScheme.outline,
               ),
             ),
-            if (_allocations.isNotEmpty) ...[
+            if (visible.isNotEmpty) ...[
               const SizedBox(width: 8),
               IconButton(
                 icon: Icon(
@@ -354,7 +660,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           ],
         ),
         const SizedBox(height: 12),
-        if (_allocations.isEmpty)
+        if (visible.isEmpty)
           Card(
             child: Padding(
               padding: Spacing.paddingLg,
@@ -387,7 +693,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         else if (_categoryView)
           _buildCategoryGroupedView(context)
         else
-          ...(_allocations.map((a) => _buildAllocationTile(context, a))),
+          ...(visible.map((a) => _buildAllocationTile(context, a))),
       ],
     );
   }
@@ -420,39 +726,114 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     final isRentalOnly = allocation.item.isRentalOnly;
     final tileColor = _categoryTileColor(allocation, colorScheme);
 
+    final leading = CircleAvatar(
+      backgroundColor: isRentalOnly
+          ? colorScheme.tertiaryContainer
+          : colorScheme.primaryContainer,
+      child: Icon(
+        isRentalOnly ? Icons.shopping_cart : Icons.category,
+        color: isRentalOnly
+            ? colorScheme.onTertiaryContainer
+            : colorScheme.primary,
+        size: 20,
+      ),
+    );
+
+    final quantityBadge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Text(
+        '${allocation.allocation.quantityNeeded}',
+        style: context.textTheme.titleMedium
+            ?.copyWith(fontWeight: FontWeight.bold),
+      ),
+    );
+
+    final subtitle = _buildCategoryTileSubtitle(context, allocation);
+
+    if (_venues.isNotEmpty) {
+      return Card(
+        color: tileColor,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              leading,
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      allocation.item.name,
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                    ?subtitle,
+                  ],
+                ),
+              ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      quantityBadge,
+                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: Icon(Icons.edit,
+                            color: colorScheme.primary, size: 20),
+                        onPressed: () =>
+                            _showEditAllocationDialog(context, allocation),
+                        tooltip: 'Edit quantity',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ],
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.swap_horiz,
+                            color: colorScheme.secondary, size: 20),
+                        onPressed: () =>
+                            _showMoveAllocationDialog(context, allocation),
+                        tooltip: 'Move to venue',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.delete_outline,
+                            color: colorScheme.error, size: 20),
+                        onPressed: () =>
+                            _confirmRemoveAllocation(context, allocation),
+                        tooltip: 'Remove',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Card(
       color: tileColor,
       child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: isRentalOnly
-              ? colorScheme.tertiaryContainer
-              : colorScheme.primaryContainer,
-          child: Icon(
-            isRentalOnly ? Icons.shopping_cart : Icons.category,
-            color: isRentalOnly
-                ? colorScheme.onTertiaryContainer
-                : colorScheme.primary,
-            size: 20,
-          ),
-        ),
+        leading: leading,
         title: Text(allocation.item.name),
-        subtitle: _buildCategoryTileSubtitle(context, allocation),
+        subtitle: subtitle,
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Text(
-                '${allocation.allocation.quantityNeeded}',
-                style: context.textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold),
-              ),
-            ),
+            quantityBadge,
             const SizedBox(width: 4),
             IconButton(
               icon: Icon(Icons.edit, color: colorScheme.primary, size: 20),
@@ -461,8 +842,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
               tooltip: 'Edit quantity',
             ),
             IconButton(
-              icon:
-                  Icon(Icons.delete_outline, color: colorScheme.error, size: 20),
+              icon: Icon(Icons.delete_outline,
+                  color: colorScheme.error, size: 20),
               onPressed: () => _confirmRemoveAllocation(context, allocation),
               tooltip: 'Remove',
             ),
@@ -503,10 +884,11 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
   Widget _buildCategoryGroupedView(BuildContext context) {
     final colorScheme = context.colorScheme;
+    final allocations = _visibleAllocations;
 
     // Group ALL allocations by category (null → 'Uncategorized')
     final Map<String, List<AllocationWithItem>> grouped = {};
-    for (final a in _allocations) {
+    for (final a in allocations) {
       final key = (a.item.category?.isNotEmpty == true)
           ? a.item.category!
           : 'Uncategorized';
@@ -520,22 +902,6 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         if (b == 'Uncategorized') return -1;
         return a.compareTo(b);
       });
-
-    // Value summary
-    final inventoryValue = _allocations
-        .where((a) =>
-            !a.item.isRentalOnly &&
-            a.item.unitCost != null &&
-            a.item.unitCost! > 0)
-        .fold<double>(
-            0, (s, a) => s + a.item.unitCost! * a.allocation.quantityNeeded);
-
-    final rentalValue = _rentals
-        .where((r) =>
-            r.status != RentalStatus.cancelled && r.rentalCost != null)
-        .fold<double>(0, (s, r) => s + r.rentalCost!);
-
-    final showSummary = inventoryValue > 0 || rentalValue > 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -568,16 +934,169 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           ...grouped[category]!
               .map((a) => _buildCategoryViewTile(context, a)),
         ],
-        if (showSummary) ...[
-          const SizedBox(height: 16),
-          _buildCategoryValueSummary(context, inventoryValue, rentalValue),
+      ],
+    );
+  }
+
+  /// Builds the per-venue cost breakdown row (inventory items + rental items
+  /// allocated to that venue). Extracted from the Builder-in-for-loop pattern
+  /// to avoid the build-scope assertion error.
+  Widget _buildVenueValueRow(BuildContext context, Venue venue) {
+    final colorScheme = context.colorScheme;
+
+    final vAllocs = _allocations
+        .where((a) => a.allocation.venueId == venue.id)
+        .toList();
+    final vValuedAllocs = vAllocs
+        .where((a) =>
+            !a.item.isRentalOnly &&
+            a.item.unitCost != null &&
+            a.item.unitCost! > 0)
+        .toList();
+
+    // Build map: rental → rental items allocated to THIS venue with a cost.
+    // One rental may have items spread across venues — we only count items
+    // whose inventory allocation points to this venue.
+    final Map<Rental, List<RentalItem>> vRentalByCompany = {};
+    for (final rental in _rentals.where(
+        (r) => r.status != RentalStatus.cancelled)) {
+      for (final ri in rental.items) {
+        if (ri.itemCost == null || ri.itemCost! <= 0) continue;
+        final isInVenue = _allocations.any((a) =>
+            a.item.id != null &&
+            a.item.id == ri.itemId &&
+            a.allocation.venueId == venue.id);
+        if (isInVenue) {
+          vRentalByCompany.putIfAbsent(rental, () => []).add(ri);
+        }
+      }
+    }
+
+    final vInv = vValuedAllocs.fold<double>(
+        0, (s, a) => s + a.item.unitCost! * a.allocation.quantityNeeded);
+    final vRent = vRentalByCompany.values.fold<double>(
+        0,
+        (s, items) =>
+            s + items.fold<double>(0, (ss, ri) => ss + ri.itemCost! * ri.quantity));
+    final vTotal = vInv + vRent;
+
+    if (vTotal == 0) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Venue header row
+        Padding(
+          padding: const EdgeInsets.only(top: 4, bottom: 2),
+          child: Row(
+            children: [
+              Icon(Icons.location_on_outlined,
+                  size: 14, color: colorScheme.secondary),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  venue.name,
+                  style: context.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.secondary,
+                  ),
+                ),
+              ),
+              Text(
+                '€${vTotal.toStringAsFixed(2)}',
+                style: context.textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.secondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Owned inventory items with cost
+        for (final a in vValuedAllocs)
+          Padding(
+            padding: const EdgeInsets.only(left: 16, bottom: 2),
+            child: Row(
+              children: [
+                Icon(Icons.subdirectory_arrow_right,
+                    size: 14, color: colorScheme.outline),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    '${a.item.name} × ${a.allocation.quantityNeeded}',
+                    style: context.textTheme.bodySmall
+                        ?.copyWith(color: colorScheme.outline),
+                  ),
+                ),
+                Text(
+                  '€${(a.item.unitCost! * a.allocation.quantityNeeded).toStringAsFixed(2)}',
+                  style: context.textTheme.bodySmall
+                      ?.copyWith(color: colorScheme.outline),
+                ),
+              ],
+            ),
+          ),
+        // Rental items grouped by company — only items allocated to this venue
+        for (final entry in vRentalByCompany.entries) ...[
+          Padding(
+            padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
+            child: Row(
+              children: [
+                Icon(Icons.local_shipping_outlined,
+                    size: 14, color: colorScheme.outline),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    entry.key.companyName,
+                    style: context.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.outline,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+                Text(
+                  '€${entry.value.fold<double>(0, (s, ri) => s + ri.itemCost! * ri.quantity).toStringAsFixed(2)}',
+                  style: context.textTheme.bodySmall
+                      ?.copyWith(color: colorScheme.outline),
+                ),
+              ],
+            ),
+          ),
+          for (final ri in entry.value)
+            Padding(
+              padding: const EdgeInsets.only(left: 32, bottom: 2),
+              child: Row(
+                children: [
+                  Icon(Icons.subdirectory_arrow_right,
+                      size: 12, color: colorScheme.outlineVariant),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      '${ri.itemName ?? 'Item #${ri.itemId}'} × ${ri.quantity}',
+                      style: context.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.outlineVariant,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '€${(ri.itemCost! * ri.quantity).toStringAsFixed(2)}',
+                    style: context.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.outlineVariant,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ],
     );
   }
 
   Widget _buildCategoryValueSummary(
-      BuildContext context, double inventoryValue, double rentalValue) {
+      BuildContext context, double inventoryValue, double rentalValue,
+      {bool showVenueBreakdown = false}) {
     final colorScheme = context.colorScheme;
     final total = inventoryValue + rentalValue;
 
@@ -599,12 +1118,81 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            if (inventoryValue > 0)
+            if (inventoryValue > 0) ...[
               _summaryRow(context, 'Owned inventory',
                   '€${inventoryValue.toStringAsFixed(2)}'),
-            if (rentalValue > 0)
+              // Per-item breakdown (informational — part of the owned inventory total above)
+              for (final a in _visibleAllocations.where((a) =>
+                  !a.item.isRentalOnly &&
+                  a.item.unitCost != null &&
+                  a.item.unitCost! > 0))
+                Padding(
+                  padding: const EdgeInsets.only(left: 16, top: 2),
+                  child: Row(
+                    children: [
+                      Icon(Icons.subdirectory_arrow_right,
+                          size: 14, color: colorScheme.outline),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '${a.item.name} × ${a.allocation.quantityNeeded}',
+                          style: context.textTheme.bodySmall
+                              ?.copyWith(color: colorScheme.outline),
+                        ),
+                      ),
+                      Text(
+                        '€${(a.item.unitCost! * a.allocation.quantityNeeded).toStringAsFixed(2)}',
+                        style: context.textTheme.bodySmall
+                            ?.copyWith(color: colorScheme.outline),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            if (rentalValue > 0) ...[
               _summaryRow(
                   context, 'Rental costs', '€${rentalValue.toStringAsFixed(2)}'),
+              // Per-item cost breakdown (informational — part of the rental total above)
+              for (final rental in _visibleRentals.where(
+                  (r) => r.status != RentalStatus.cancelled))
+                for (final item in rental.items.where(
+                    (i) => i.itemCost != null && i.itemCost! > 0))
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16, top: 2),
+                    child: Row(
+                      children: [
+                        Icon(Icons.subdirectory_arrow_right,
+                            size: 14, color: colorScheme.outline),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            '${item.itemName ?? 'Item #${item.itemId}'} × ${item.quantity}',
+                            style: context.textTheme.bodySmall
+                                ?.copyWith(color: colorScheme.outline),
+                          ),
+                        ),
+                        Text(
+                          '€${item.itemCost!.toStringAsFixed(2)}',
+                          style: context.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.outline,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+            ],
+            // Per-venue breakdown in "All Venues" view
+            if (showVenueBreakdown) ...[
+              const Divider(height: 20),
+              Text(
+                'Per Venue',
+                style: context.textTheme.labelSmall
+                    ?.copyWith(color: colorScheme.outline),
+              ),
+              const SizedBox(height: 6),
+              for (final venue in _venues)
+                _buildVenueValueRow(context, venue),
+            ],
             const Divider(height: 20),
             Row(
               children: [
@@ -652,27 +1240,116 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     final colorScheme = context.colorScheme;
     final isShortage = _shortages.any((s) => s.itemId == allocation.item.id);
     final isRentalOnly = allocation.item.isRentalOnly;
+    final cardColor = isShortage
+        ? colorScheme.errorContainer.withValues(alpha: 0.2)
+        : null;
 
-    return Card(
-      color: isShortage
-          ? colorScheme.errorContainer.withValues(alpha: 0.2)
-          : null,
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: isShortage
-              ? colorScheme.error.withValues(alpha: 0.2)
-              : isRentalOnly
-                  ? colorScheme.tertiaryContainer
-                  : colorScheme.primaryContainer,
-          child: Icon(
-            isRentalOnly ? Icons.shopping_cart : Icons.category,
-            color: isShortage
-                ? colorScheme.error
-                : isRentalOnly
-                    ? colorScheme.onTertiaryContainer
-                    : colorScheme.primary,
+    final leading = CircleAvatar(
+      backgroundColor: isShortage
+          ? colorScheme.error.withValues(alpha: 0.2)
+          : isRentalOnly
+              ? colorScheme.tertiaryContainer
+              : colorScheme.primaryContainer,
+      child: Icon(
+        isRentalOnly ? Icons.shopping_cart : Icons.category,
+        color: isShortage
+            ? colorScheme.error
+            : isRentalOnly
+                ? colorScheme.onTertiaryContainer
+                : colorScheme.primary,
+      ),
+    );
+
+    final quantityBadge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Text(
+        '${allocation.allocation.quantityNeeded}',
+        style: context.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+
+    if (_venues.isNotEmpty) {
+      return Card(
+        color: cardColor,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              leading,
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      allocation.item.name,
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                    Text(
+                      allocation.item.category ?? 'No category',
+                      style: TextStyle(color: colorScheme.outline),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      quantityBadge,
+                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: Icon(Icons.edit, color: colorScheme.primary),
+                        onPressed: () =>
+                            _showEditAllocationDialog(context, allocation),
+                        tooltip: 'Edit quantity',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ],
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.swap_horiz,
+                            color: colorScheme.secondary),
+                        onPressed: () =>
+                            _showMoveAllocationDialog(context, allocation),
+                        tooltip: 'Move to venue',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.delete_outline,
+                            color: colorScheme.error),
+                        onPressed: () =>
+                            _confirmRemoveAllocation(context, allocation),
+                        tooltip: 'Remove',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
+      );
+    }
+
+    return Card(
+      color: cardColor,
+      child: ListTile(
+        leading: leading,
         title: Text(allocation.item.name),
         subtitle: Text(
           allocation.item.category ?? 'No category',
@@ -681,19 +1358,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Text(
-                '${allocation.allocation.quantityNeeded}',
-                style: context.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
+            quantityBadge,
             const SizedBox(width: 8),
             IconButton(
               icon: Icon(Icons.edit, color: colorScheme.primary),
@@ -711,109 +1376,39 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     );
   }
 
-  Widget _buildGearValueSection(BuildContext context) {
-    final colorScheme = context.colorScheme;
+  /// Unified gear value display used by both list and category views.
+  /// Uses the same card style as [_buildCategoryValueSummary].
+  Widget _buildSharedGearValueSection(BuildContext context) {
+    final allocations = _visibleAllocations;
+    final rentals = _visibleRentals;
 
-    // Only include items that have a unit cost defined
-    final valuedAllocations = _allocations
-        .where((a) => a.item.unitCost != null && a.item.unitCost! > 0)
-        .toList();
+    final inventoryValue = allocations
+        .where((a) =>
+            !a.item.isRentalOnly &&
+            a.item.unitCost != null &&
+            a.item.unitCost! > 0)
+        .fold<double>(
+            0, (s, a) => s + a.item.unitCost! * a.allocation.quantityNeeded);
 
-    if (valuedAllocations.isEmpty) return const SizedBox.shrink();
+    double rentalEffectiveCost(Rental r) {
+      if (r.rentalCost != null) return r.rentalCost!;
+      return r.items
+          .fold<double>(0, (s, i) => s + (i.itemCost ?? 0) * i.quantity);
+    }
 
-    final total = valuedAllocations.fold<double>(
-      0,
-      (sum, a) => sum + a.item.unitCost! * a.allocation.quantityNeeded,
-    );
+    final rentalValue = rentals
+        .where((r) => r.status != RentalStatus.cancelled)
+        .fold<double>(0, (s, r) => s + rentalEffectiveCost(r));
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.euro, color: colorScheme.secondary),
-            const SizedBox(width: 8),
-            Text(
-              'Gear Value',
-              style: context.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: Spacing.paddingMd,
-            child: Column(
-              children: [
-                ...valuedAllocations.map((a) {
-                  final lineValue = a.item.unitCost! * a.allocation.quantityNeeded;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            a.item.name,
-                            style: context.textTheme.bodyMedium,
-                          ),
-                        ),
-                        Text(
-                          '${a.allocation.quantityNeeded} × €${a.item.unitCost!.toStringAsFixed(2)}',
-                          style: context.textTheme.bodySmall?.copyWith(
-                            color: colorScheme.outline,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        SizedBox(
-                          width: 80,
-                          child: Text(
-                            '€${lineValue.toStringAsFixed(2)}',
-                            textAlign: TextAlign.end,
-                            style: context.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-                const Divider(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Total Gear Value',
-                        style: context.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '€${total.toStringAsFixed(2)}',
-                      style: context.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: colorScheme.secondary,
-                      ),
-                    ),
-                  ],
-                ),
-                if (valuedAllocations.length < _allocations.length) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    '${_allocations.length - valuedAllocations.length} item(s) have no cost set',
-                    style: context.textTheme.bodySmall?.copyWith(
-                      color: colorScheme.outline,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ],
+    if (inventoryValue == 0 && rentalValue == 0) return const SizedBox.shrink();
+
+    final showVenueBreakdown = _selectedVenueId == null && _venues.isNotEmpty;
+
+    return _buildCategoryValueSummary(
+      context,
+      inventoryValue,
+      rentalValue,
+      showVenueBreakdown: showVenueBreakdown,
     );
   }
 
@@ -834,7 +1429,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           ],
         ),
         const SizedBox(height: 12),
-        ...(_rentals.map((r) => _buildRentalTile(context, r))),
+        ...(_visibleRentals.map((r) => _buildRentalTile(context, r))),
       ],
     );
   }
@@ -887,6 +1482,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   icon: const Icon(Icons.more_vert),
                   onSelected: (value) {
                     if (value == 'edit') _editRental(rental);
+                    if (value == 'move') _showMoveRentalDialog(context, rental);
                     if (value == 'delete') _deleteRental(rental);
                   },
                   itemBuilder: (_) => [
@@ -898,6 +1494,15 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                         contentPadding: EdgeInsets.zero,
                       ),
                     ),
+                    if (_venues.isNotEmpty)
+                      const PopupMenuItem(
+                        value: 'move',
+                        child: ListTile(
+                          leading: Icon(Icons.swap_horiz),
+                          title: Text('Move to venue'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
                     const PopupMenuItem(
                       value: 'delete',
                       child: ListTile(
@@ -918,22 +1523,33 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            // Show items in the rental
-            ...rental.items.map((item) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                children: [
-                  Icon(Icons.inventory_2, size: 14, color: colorScheme.outline),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      '${item.itemName ?? 'Item #${item.itemId}'} × ${item.quantity}',
-                      style: context.textTheme.bodySmall,
+            // Show items in the rental with per-item cost if available
+            ...rental.items.map((item) {
+              final hasItemCost = item.itemCost != null && item.itemCost! > 0;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    Icon(Icons.inventory_2, size: 14, color: colorScheme.outline),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '${item.itemName ?? 'Item #${item.itemId}'} × ${item.quantity}',
+                        style: context.textTheme.bodySmall,
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            )),
+                    if (hasItemCost)
+                      Text(
+                        '€${item.itemCost!.toStringAsFixed(2)}',
+                        style: context.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: colorScheme.secondary,
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }),
             const SizedBox(height: 8),
             Row(
               children: [
@@ -1021,6 +1637,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     int selectedTab = 0; // 0 = from inventory, 1 = rental-only
     Item? selectedItem;
     int quantity = 1;
+    // Pre-select the active venue (null = no specific venue / all)
+    int? selectedVenueId = _selectedVenueId;
     final newItemNameController = TextEditingController();
     final newItemCategoryController = TextEditingController();
 
@@ -1251,6 +1869,29 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                       },
                     ),
                   ],
+                  // Venue picker — shown only when venues exist
+                  if (_venues.isNotEmpty) ...[
+                    const Divider(height: 24),
+                    DropdownButtonFormField<int?>(
+                      decoration: const InputDecoration(
+                        labelText: 'Venue / Stage',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.place_outlined),
+                      ),
+                      initialValue: selectedVenueId,
+                      items: [
+                        const DropdownMenuItem<int?>(
+                          value: null,
+                          child: Text('No specific venue'),
+                        ),
+                        ..._venues.map((v) => DropdownMenuItem<int?>(
+                              value: v.id,
+                              child: Text(v.name),
+                            )),
+                      ],
+                      onChanged: (v) => setDialogState(() => selectedVenueId = v),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -1266,12 +1907,14 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     : () async {
                         Navigator.pop(dialogContext);
                         if (selectedTab == 0 && selectedItem != null) {
-                          await _addMaterial(selectedItem!, quantity);
+                          await _addMaterial(selectedItem!, quantity,
+                              venueId: selectedVenueId);
                         } else if (selectedTab == 1) {
                           await _addRentalOnlyMaterial(
                             newItemNameController.text.trim(),
                             quantity,
                             category: newItemCategoryController.text.trim().nullIfEmpty,
+                            venueId: selectedVenueId,
                           );
                         }
                       },
@@ -1287,7 +1930,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     newItemCategoryController.dispose();
   }
 
-  Future<void> _addRentalOnlyMaterial(String itemName, int quantity, {String? category}) async {
+  Future<void> _addRentalOnlyMaterial(String itemName, int quantity,
+      {String? category, int? venueId}) async {
     // Create a new rental-only item in inventory
     final newItem = Item(
       name: itemName,
@@ -1304,6 +1948,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       eventId: _event.id!,
       itemId: itemId,
       quantityNeeded: quantity,
+      venueId: venueId,
     );
 
     await _allocationDao.insert(allocation);
@@ -1315,11 +1960,12 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
-  Future<void> _addMaterial(Item item, int quantity) async {
+  Future<void> _addMaterial(Item item, int quantity, {int? venueId}) async {
     final allocation = Allocation(
       eventId: _event.id!,
       itemId: item.id!,
       quantityNeeded: quantity,
+      venueId: venueId,
     );
 
     await _allocationDao.insert(allocation);
@@ -1331,97 +1977,187 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
-  Future<void> _showEditAllocationDialog(
-      BuildContext context, AllocationWithItem allocation) async {
-    final controller = TextEditingController(
-      text: allocation.allocation.quantityNeeded.toString(),
-    );
-    int currentQty = allocation.allocation.quantityNeeded;
+  // ─── Move to venue ─────────────────────────────────────────────────────────
 
-    await showDialog(
+  Future<void> _showMoveAllocationDialog(
+      BuildContext context, AllocationWithItem allocation) async {
+    final currentVenueId = allocation.allocation.venueId;
+    final currentVenueName = currentVenueId == null
+        ? 'No specific venue'
+        : (_venues.firstWhere((v) => v.id == currentVenueId,
+                orElse: () => _venues.first))
+            .name;
+
+    final picked = await showDialog<_VenuePick>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final theme = Theme.of(context);
-          final needsRental = currentQty > allocation.item.quantity;
-          
-          return AlertDialog(
-            title: Text('Edit ${allocation.item.name}'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(
-                  controller: controller,
-                  decoration: InputDecoration(
-                    labelText: 'Quantity Needed',
-                    helperText: 'In stock: ${allocation.item.quantity}',
-                    border: const OutlineInputBorder(),
+      builder: (ctx) {
+        int? selected = currentVenueId;
+        return StatefulBuilder(
+          builder: (context, setS) => AlertDialog(
+            title: Text('Move "${allocation.item.name}"'),
+            content: RadioGroup<int?>(
+              groupValue: selected,
+              onChanged: (v) => setS(() => selected = v),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Current: $currentVenueName',
+                    style: context.textTheme.bodySmall
+                        ?.copyWith(color: context.colorScheme.outline),
                   ),
-                  keyboardType: TextInputType.number,
-                  onChanged: (value) {
-                    setDialogState(() {
-                      currentQty = int.tryParse(value) ?? 1;
-                    });
-                  },
-                ),
-                if (needsRental) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.tertiaryContainer,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.info_outline, 
-                          size: 18, 
-                          color: theme.colorScheme.onTertiaryContainer),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'You\'ll need to rent ${currentQty - allocation.item.quantity} more units',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onTertiaryContainer,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                  const Divider(height: 16),
+                  const RadioListTile<int?>(
+                    value: null,
+                    title: Text('No specific venue'),
                   ),
+                  ..._venues.map((v) => RadioListTile<int?>(
+                        value: v.id,
+                        title: Text(v.name),
+                      )),
                 ],
-              ],
+              ),
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
+                onPressed: () => Navigator.pop(ctx),
                 child: const Text('Cancel'),
               ),
               FilledButton(
-                onPressed: () async {
-                  final qty = int.tryParse(controller.text) ?? 1;
-                  Navigator.pop(dialogContext);
-                  await _updateAllocation(allocation.allocation, qty);
-                },
-                child: const Text('Save'),
+                onPressed: () =>
+                    Navigator.pop(ctx, _VenuePick(venueId: selected)),
+                child: const Text('Move'),
               ),
             ],
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
 
-    controller.dispose();
+    if (picked != null && mounted) {
+      final updated = allocation.allocation.copyWith(
+        venueId: picked.venueId,
+        clearVenueId: picked.venueId == null,
+      );
+      await _allocationDao.update(updated);
+      await _loadData();
+    }
   }
 
-  Future<void> _updateAllocation(Allocation allocation, int quantity) async {
-    await _allocationDao.update(allocation.copyWith(quantityNeeded: quantity));
-    await _loadData();
-    
-    if (mounted) {
-      context.read<AppStateProvider>().notifyRefreshNeeded();
-      context.showSuccess('Quantity updated');
+  Future<void> _showMoveRentalDialog(
+      BuildContext context, Rental rental) async {
+    final currentVenueId = rental.venueId;
+    final currentVenueName = currentVenueId == null
+        ? 'No specific venue'
+        : (_venues.firstWhere((v) => v.id == currentVenueId,
+                orElse: () => _venues.first))
+            .name;
+
+    final picked = await showDialog<_VenuePick>(
+      context: context,
+      builder: (ctx) {
+        int? selected = currentVenueId;
+        return StatefulBuilder(
+          builder: (context, setS) => AlertDialog(
+            title: const Text('Move rental to venue'),
+            content: RadioGroup<int?>(
+              groupValue: selected,
+              onChanged: (v) => setS(() => selected = v),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Current: $currentVenueName',
+                    style: context.textTheme.bodySmall
+                        ?.copyWith(color: context.colorScheme.outline),
+                  ),
+                  const Divider(height: 16),
+                  const RadioListTile<int?>(
+                    value: null,
+                    title: Text('No specific venue'),
+                  ),
+                  ..._venues.map((v) => RadioListTile<int?>(
+                        value: v.id,
+                        title: Text(v.name),
+                      )),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () =>
+                    Navigator.pop(ctx, _VenuePick(venueId: selected)),
+                child: const Text('Move'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (picked != null && mounted) {
+      final updated = rental.copyWith(
+        venueId: picked.venueId,
+        clearVenueId: picked.venueId == null,
+      );
+      await _rentalDao.update(updated);
+      await _loadData();
     }
+  }
+
+  Future<void> _showEditAllocationDialog(
+      BuildContext context, AllocationWithItem allocation) async {
+    // For rental-only items, item.quantity is always 0 (not owned).
+    // Show the allocation's quantityNeeded as the initial quantity instead.
+    final itemForEdit = allocation.item.isRentalOnly
+        ? allocation.item.copyWith(
+            quantity: allocation.allocation.quantityNeeded)
+        : allocation.item;
+    final oldQty = itemForEdit.quantity;
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => AddItemDialog(item: itemForEdit),
+    );
+    if (!mounted) return;
+    // Re-fetch the item to check if quantity changed
+    final updatedItem = await _itemDao.getById(allocation.item.id!);
+    if (!mounted) return;
+    if (updatedItem != null) {
+      // For rental-only: quantity in DB stays 0; use updatedItem.quantity only
+      // if the user changed it, otherwise preserve allocation qty.
+      final newQty = allocation.item.isRentalOnly
+          ? updatedItem.quantity == 0 ? allocation.allocation.quantityNeeded : updatedItem.quantity
+          : updatedItem.quantity;
+      if (newQty != allocation.allocation.quantityNeeded ||
+          (!allocation.item.isRentalOnly && updatedItem.quantity != oldQty)) {
+        // Sync allocation quantityNeeded
+        await _allocationDao.update(
+            allocation.allocation.copyWith(quantityNeeded: newQty));
+        // Sync rental item quantities for this event
+        for (final rental in _rentals) {
+          for (final ri in rental.items) {
+            if (ri.itemId == allocation.item.id) {
+              final updatedRental = rental.copyWith(
+                items: rental.items
+                    .map((i) => i.itemId == allocation.item.id
+                        ? i.copyWith(quantity: newQty)
+                        : i)
+                    .toList(),
+              );
+              await _rentalDao.update(updatedRental);
+              break;
+            }
+          }
+        }
+      }
+    }
+    await _loadData();
+    if (!mounted) return;
+    this.context.read<AppStateProvider>().notifyRefreshNeeded();
   }
 
   Future<void> _confirmRemoveAllocation(
@@ -1464,6 +2200,50 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     String? singleItemName,
     int? singleQuantity,
   }) async {
+    // If venues exist and no specific venue is pre-selected, let the user pick one first
+    int? rentalVenueId = _selectedVenueId;
+    if (_venues.isNotEmpty && rentalVenueId == null) {
+      rentalVenueId = await showDialog<int?>(
+        context: context,
+        builder: (ctx) {
+          int? picked; // null = no specific venue
+          return AlertDialog(
+            title: const Text('Assign to Venue?'),
+            content: StatefulBuilder(
+              builder: (context, setState) => RadioGroup<int?>(
+                groupValue: picked,
+                onChanged: (v) => setState(() => picked = v),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const RadioListTile<int?>(
+                      title: Text('No specific venue'),
+                      value: null,
+                    ),
+                    ..._venues.map((v) => RadioListTile<int?>(
+                          title: Text(v.name),
+                          value: v.id,
+                        )),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, null),
+                child: const Text('Skip'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, picked),
+                child: const Text('Continue'),
+              ),
+            ],
+          );
+        },
+      );
+      if (!mounted) return;
+    }
+
     // Load all inventory items for the "Add Item" dialog
     final allItems = await _itemDao.getAll();
     
@@ -1495,7 +2275,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     
     if (!mounted) return;
     if (result != null) {
-      await _createRental(result);
+      await _createRental(result, venueId: rentalVenueId);
     }
   }
   
@@ -1512,8 +2292,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     await _showCreateRentalDialog(initialItems: initialItems);
   }
 
-  Future<void> _createRental(Rental rental) async {
-    await _rentalDao.insert(rental);
+  Future<void> _createRental(Rental rental, {int? venueId}) async {
+    // Attach venue if one is active
+    final toSave = venueId != null ? rental.copyWith(venueId: venueId) : rental;
+    await _rentalDao.insert(toSave);
 
     // Ensure every item in the rental has an allocation for this event.
     // The item that triggered the dialog already has one; items added *inside*

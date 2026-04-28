@@ -34,6 +34,8 @@ class _EditRentalDialogState extends State<EditRentalDialog> {
   
   // Items in the rental
   late List<RentalItemData> _items;
+  // Per-item cost controllers (parallel list)
+  final List<TextEditingController> _itemCostControllers = [];
 
   @override
   void initState() {
@@ -59,7 +61,14 @@ class _EditRentalDialogState extends State<EditRentalDialog> {
       itemId: item.itemId,
       itemName: item.itemName ?? 'Item #${item.itemId}',
       quantity: item.quantity,
+      itemCost: item.itemCost,
     )).toList();
+    // Initialise cost controllers from existing values
+    for (final item in _items) {
+      _itemCostControllers.add(TextEditingController(
+        text: item.itemCost != null ? item.itemCost!.toStringAsFixed(2) : '',
+      ));
+    }
   }
 
   @override
@@ -71,6 +80,9 @@ class _EditRentalDialogState extends State<EditRentalDialog> {
     _returnLocationController.dispose();
     _pickupNotesController.dispose();
     _returnNotesController.dispose();
+    for (final c in _itemCostControllers) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -90,6 +102,7 @@ class _EditRentalDialogState extends State<EditRentalDialog> {
       itemId: item.itemId,
       quantity: item.quantity,
       itemName: item.itemName,
+      itemCost: item.itemCost,
     )).toList();
     
     final updatedRental = Rental(
@@ -135,17 +148,42 @@ class _EditRentalDialogState extends State<EditRentalDialog> {
     );
     
     if (result != null && mounted) {
-      setState(() => _items.add(result));
+      setState(() {
+        _items.add(result);
+        _itemCostControllers.add(TextEditingController());
+      });
     }
   }
   
   void _removeItem(int index) {
-    setState(() => _items.removeAt(index));
+    setState(() {
+      _items.removeAt(index);
+      _itemCostControllers[index].dispose();
+      _itemCostControllers.removeAt(index);
+    });
+    _recomputeTotalIfAllItemsHaveCost();
   }
   
   void _updateQuantity(int index, int newQuantity) {
     if (newQuantity > 0) {
       setState(() => _items[index].quantity = newQuantity);
+    }
+  }
+
+  void _updateItemCost(int index, String raw) {
+    _items[index].itemCost = double.tryParse(raw.replaceAll(',', '.'));
+    _recomputeTotalIfAllItemsHaveCost();
+  }
+
+  void _recomputeTotalIfAllItemsHaveCost() {
+    // Only auto-fill the total when it has not been manually set (field is empty)
+    if (_costController.text.isNotEmpty) return;
+    if (_items.isEmpty) return;
+    final allHaveCost =
+        _items.every((i) => i.itemCost != null && i.itemCost! > 0);
+    if (allHaveCost) {
+      final sum = _items.fold<double>(0, (s, i) => s + i.itemCost!);
+      _costController.text = sum.toStringAsFixed(2);
     }
   }
 
@@ -379,51 +417,86 @@ class _EditRentalDialogState extends State<EditRentalDialog> {
   
   Widget _buildItemRow(RentalItemData item, int index, ThemeData theme) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
       decoration: index > 0 ? BoxDecoration(
         border: Border(
           top: BorderSide(color: theme.colorScheme.outlineVariant),
         ),
       ) : null,
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(
-              item.itemName,
-              style: theme.textTheme.bodyMedium,
-            ),
-          ),
-          // Quantity controls
-          IconButton(
-            icon: const Icon(Icons.remove, size: 18),
-            onPressed: item.quantity > 1 
-                ? () => _updateQuantity(index, item.quantity - 1)
-                : null,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text(
-              '${item.quantity}',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.bold,
+          // Row 1: name + remove
+          Row(
+            children: [
+              Expanded(
+                child: Text(item.itemName, style: theme.textTheme.bodyMedium),
               ),
-            ),
+              IconButton(
+                icon: Icon(Icons.close, size: 18, color: theme.colorScheme.error),
+                onPressed: () => _removeItem(index),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                tooltip: 'Remove item',
+              ),
+            ],
           ),
-          IconButton(
-            icon: const Icon(Icons.add, size: 18),
-            onPressed: () => _updateQuantity(index, item.quantity + 1),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: Icon(Icons.close, size: 18, color: theme.colorScheme.error),
-            onPressed: () => _removeItem(index),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            tooltip: 'Remove item',
+          const SizedBox(height: 4),
+          // Row 2: qty controls + optional cost
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.remove, size: 18),
+                onPressed: item.quantity > 1
+                    ? () => _updateQuantity(index, item.quantity - 1)
+                    : null,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  '${item.quantity}',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.add, size: 18),
+                onPressed: () => _updateQuantity(index, item.quantity + 1),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _itemCostControllers[index],
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'Cost',
+                    prefixText: '€ ',
+                    border: const OutlineInputBorder(),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 8),
+                    suffixIcon: _itemCostControllers[index].text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 14),
+                            onPressed: () {
+                              _itemCostControllers[index].clear();
+                              _updateItemCost(index, '');
+                            },
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                                minWidth: 24, minHeight: 24),
+                          )
+                        : null,
+                  ),
+                  keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true),
+                  onChanged: (v) => _updateItemCost(index, v),
+                ),
+              ),
+            ],
           ),
         ],
       ),

@@ -6,6 +6,7 @@ class Allocation {
   final int itemId;
   final int quantityNeeded; // How many of this item the event needs
   final String? notes;
+  final int? venueId;       // Optional — which venue/stage this is for
   final DateTime createdAt;
 
   Allocation({
@@ -14,6 +15,7 @@ class Allocation {
     required this.itemId,
     this.quantityNeeded = 1,
     this.notes,
+    this.venueId,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -25,6 +27,7 @@ class Allocation {
       'item_id': itemId,
       'quantity_needed': quantityNeeded,
       'notes': notes,
+      'venue_id': venueId,
       'created_at': createdAt.toIso8601String(),
     };
   }
@@ -37,6 +40,7 @@ class Allocation {
       itemId: map['item_id'] as int,
       quantityNeeded: map['quantity_needed'] as int? ?? 1,
       notes: map['notes'] as String?,
+      venueId: map['venue_id'] as int?,
       createdAt: DateTime.parse(map['created_at'] as String),
     );
   }
@@ -48,6 +52,8 @@ class Allocation {
     int? itemId,
     int? quantityNeeded,
     String? notes,
+    int? venueId,
+    bool clearVenueId = false,
     DateTime? createdAt,
   }) {
     return Allocation(
@@ -56,6 +62,7 @@ class Allocation {
       itemId: itemId ?? this.itemId,
       quantityNeeded: quantityNeeded ?? this.quantityNeeded,
       notes: notes ?? this.notes,
+      venueId: clearVenueId ? null : (venueId ?? this.venueId),
       createdAt: createdAt ?? this.createdAt,
     );
   }

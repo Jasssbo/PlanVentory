@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  analyze-and-test:
+    name: Analyze & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+        working-directory: planventory
+
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed .
+        working-directory: planventory
+
+      - name: Analyze (dart analyze)
+        run: flutter analyze --fatal-infos
+        working-directory: planventory
+
+      - name: Run tests
+        run: flutter test --coverage
+        working-directory: planventory

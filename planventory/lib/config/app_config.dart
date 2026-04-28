@@ -38,22 +38,7 @@ class AppConfig {
   /// Database name
   static const String databaseName = 'planventory.db';
 
-  /// Database version (increment when schema changes)
-  static const int databaseVersion = 1;
-
   /// Enable logging based on environment
   static bool get enableLogging =>
       _environment == Environment.development || isDebug;
-
-  /// API base URL (for future cloud sync)
-  static String get apiBaseUrl {
-    switch (_environment) {
-      case Environment.development:
-        return 'http://localhost:8080/api';
-      case Environment.staging:
-        return 'https://staging.planventory.app/api';
-      case Environment.production:
-        return 'https://api.planventory.app/api';
-    }
-  }
 }

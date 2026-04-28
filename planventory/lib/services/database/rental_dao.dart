@@ -18,6 +18,7 @@ class RentalDao {
         'rental_id': rentalId,
         'item_id': item.itemId,
         'quantity': item.quantity,
+        'item_cost': item.itemCost,
       });
     }
     
@@ -44,6 +45,7 @@ class RentalDao {
         'rental_id': rental.id,
         'item_id': item.itemId,
         'quantity': item.quantity,
+        'item_cost': item.itemCost,
       });
     }
     

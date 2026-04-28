@@ -7,3 +7,4 @@ export 'rental.dart';
 export 'rental_item.dart';
 export 'rental_item_data.dart';
 export 'event_status.dart';
+export 'venue.dart';
