@@ -180,6 +180,35 @@ lib/
 
 ---
 
+## 📦 Building for Distribution
+
+### Android APK
+```bash
+flutter build apk --release
+# Output: build/app/outputs/flutter-apk/app-release.apk
+```
+
+### Linux AppImage (portable, runs on any x86_64 Linux distro)
+
+Prerequisites (one-time setup):
+```bash
+# Install appimagetool
+wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /usr/local/bin/appimagetool
+sudo chmod +x /usr/local/bin/appimagetool
+
+# Install flutter_distributor
+dart pub global activate flutter_distributor
+export PATH="$PATH":"$HOME/.pub-cache/bin"
+```
+
+Build:
+```bash
+flutter_distributor release --name linux
+# Output: dist/1.0.0+1/planventory-1.0.0+1-linux.AppImage
+```
+
+---
+
 ## 🆘 Need Help?
 
 - **Flutter docs:** https://docs.flutter.dev

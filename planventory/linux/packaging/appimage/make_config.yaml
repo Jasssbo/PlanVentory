@@ -1,0 +1,8 @@
+display_name: PlanVentory
+generic_name: Event Inventory Manager
+icon: web/icons/Icon-512.png
+startup_notify: true
+
+categories:
+  - Utility
+  - Office
